@@ -98,12 +98,12 @@ class MiroController:
 		# hat = joystick.get_hat(0)
 		#
 		#
-		# vel = - left_stick_vertical * 0.4
-		# omega = - right_stick_horizontal * 5
-		# if abs(vel) < 0.05:
-		# 	vel = 0
-		# if abs(omega) < 0.05:
-		# 	omega = 0
+		vel = - left_stick_vertical * 0.4
+		omega = - right_stick_horizontal * 5
+		if abs(vel) < 0.05:
+			vel = 0
+		if abs(omega) < 0.05:
+			omega = 0
 
 		if button_A:
 			self.victory_dance()
