@@ -48,6 +48,10 @@ class MiroController:
 		pygame.joystick.init()
 		self.joystick1 = pygame.joystick.Joystick(0)
 		self.joystick1.init()
+		self.just_finished_lift = False
+		self.fixed_lift_position = np.radians(30)
+		self.just_finished_yaw = False
+		self.fixed_yaw_position = 0.0
 
 	def callback_kinematic_joints(self, msg):
 		self.kin_pos[0] = msg.position[0]
@@ -57,23 +61,29 @@ class MiroController:
 
 	def controller(self):
 		t_init = time.time()
-		self.reset_miro()
+		# self.reset_miro()
 		vel = 0
 		omega = 0
 		while not rospy.core.is_shutdown():
 			t = time.time() - t_init
 
-			vel, alpha = self.get_movement_from_joystick_vals()
+			vel, alpha, lift, yaw = self.get_movement_from_joystick_vals()
+
 			self.msg_wheels.twist.linear.x = vel
 			self.msg_wheels.twist.angular.z = alpha
+			self.msg_kin.position[1] = lift
+			self.msg_kin.position[2] = yaw
 
 			self.pub_wheels.publish(self.msg_wheels)
+			self.pub_kin.publish(self.msg_kin)
 
 	def get_movement_from_joystick_vals(self):
 		# max and min velocities are +- 0.4 m/s
 		# max and min angular velocities are +- 5 rad/s
 		vel = 0
 		omega = 0
+		lift = np.radians(30)
+		yaw = 0.0
 
 		pygame.event.get() # gets any updates from pygame events (events such as a button been pressed etc)
 		# for a in range(self.joystick1.get_numaxes()):
@@ -106,9 +116,9 @@ class MiroController:
 		# for directional buttons, hat is a tuple of (left_right, up_down) with values of 1 or -1 if right/up or
 		# left/down is pressed, respectively. Both horizontal and vertical can be simultaneously pressed,
 		# so that pressing the up and left buttons gives (-1, 1), for instance
-		# hat = joystick.get_hat(0)
-		#
-		#
+		hat = joystick.get_hat(0)
+
+		# calculate velocity and angular velocity
 		vel = - LS_vertical * 0.4
 		omega = - RS_horizontal * 5
 
@@ -118,6 +128,41 @@ class MiroController:
 		if abs(omega) < 0.05:
 			omega = 0
 
+		# calculate kosmetic joints
+		# self.kin_pos[tilt, lift, yaw, pitch] range of vals (in degs) are [unknown, 8 (up) to 60 (down), -50 (right)
+		# to 50 (
+		# left), -22 (up) to 8 (down)]
+		if hat[1] != 0:
+			lift = self.kin_pos[1] - 0.1 * hat[1]
+			self.just_finished_lift = True
+		elif self.just_finished_lift:
+			self.fixed_lift_position = self.kin_pos[1]
+			self.just_finished_lift = False
+		if not self.just_finished_lift:
+			lift = self.fixed_lift_position
+		if np.degrees(lift) > 60:
+			lift = np.radians(60)
+		elif np.degrees(lift) < 8:
+			lift = np.radians(8)
+
+		if hat[0] != 0:
+			yaw = self.kin_pos[2] - 0.2 * hat[0]
+			self.just_finished_yaw = True
+		elif self.just_finished_yaw:
+			self.fixed_yaw_position = self.kin_pos[2]
+			self.just_finished_yaw = False
+		if not self.just_finished_yaw:
+			yaw = self.fixed_yaw_position
+		if np.degrees(yaw) > 50:
+			yaw = np.radians(50)
+		elif np.degrees(yaw) < -50:
+			yaw = np.radians(-50)
+
+		# self.msg_cos.data[2] = 0
+		# self.msg_cos.data[3] = 0
+		# self.pub_cos.publish(self.msg_cos)
+
+
 		# Mapping the buttons to sequences of behaviours
 		# if button_A == 1:
 		# 	self.victory_dance()
@@ -126,43 +171,47 @@ class MiroController:
 		# 	self.head_shake_in_disappointment()
 		# elif button_X == 1:
 		# 	self.reset_miro()
+		#
+		return vel, omega, lift, yaw
 
-		return vel, omega
 
-
-	def victory_dance(self):
-		t_init = time.time()
-		t = 0
-		while t < 2:
-			self.msg_kin.position[1] = np.radians(t*15 + 30)
-			self.pub_kin.publish(self.msg_kin)
-			t = time.time() - t_init
-		time.sleep(10)
-		self.reset_miro()
-
-	def head_shake_in_disappointment(self):
-		t_init = time.time()
-		self.msg_wheels.twist.linear.x = 0
-		self.msg_wheels.twist.angular.z = 0
-		t = 0
-		while t < 6:
-			t = time.time() - t_init
-			if t < 2:
-				self.msg_kin.position[1] = np.radians(t*15 + 34) # lift, between 8 degs (all way up) and 60 deg (all way
-		# down)
-				self.msg_cos.data[2] = t - 0.2
-				self.msg_cos.data[3] = t - 0.2
-			else:
-				self.msg_kin.position[2] = np.radians(30.0 * np.sin((t - 1) / (8/3) * 2 * np.pi)) # yaw, between -50 and
-			# 50 degs
-			self.msg_kin.position[3] = np.radians(0.0) #  # pitch, between -22 degs (up) and 8 degs (down)
-			self.pub_kin.publish(self.msg_kin)
-			self.pub_cos.publish(self.msg_cos)
-		self.reset_miro()
+	# def victory_dance(self):
+	# 	t_init = time.time()
+	# 	t = 0
+	# 	while t < 2:
+	# 		self.msg_kin.position[1] = np.radians(t*15 + 30)
+	# 		self.pub_kin.publish(self.msg_kin)
+	# 		t = time.time() - t_init
+	# 	time.sleep(10)
+	# 	self.reset_miro()
+	#
+	# def head_shake_in_disappointment(self):
+	# 	t_init = time.time()
+	# 	self.msg_wheels.twist.linear.x = 0
+	# 	self.msg_wheels.twist.angular.z = 0
+	# 	t = 0
+	# 	while t < 6:
+	# 		t = time.time() - t_init
+	# 		if t < 2:
+	# 			self.msg_kin.position[1] = np.radians(t*15 + 34) # lift, between 8 degs (all way up) and 60 deg (all way
+	# 	# down)
+	# 			self.msg_cos.data[2] = t - 0.2
+	# 			self.msg_cos.data[3] = t - 0.2
+	# 		else:
+	# 			self.msg_kin.position[2] = np.radians(30.0 * np.sin((t - 1) / (8/3) * 2 * np.pi)) # yaw, between -50 and
+	# 		# 50 degs
+	# 		self.msg_kin.position[3] = np.radians(0.0) #  # pitch, between -22 degs (up) and 8 degs (down)
+	# 		self.pub_kin.publish(self.msg_kin)
+	# 		self.pub_cos.publish(self.msg_cos)
+	# 	self.reset_miro()
 
 	def reset_miro(self):
 		# [tilt, lift, yaw, pitch] range of vals (in degs) are [unknown, 8 (up) to 60 (down), -50 (right) to 50 (
 		# left), -22 (up) to 8 (down)]
+
+		self.msg_cos.data[2] = 0
+		self.msg_cos.data[3] = 0
+		self.pub_cos.publish(self.msg_cos)
 
 		reset_position = [0.0, np.radians(30), np.radians(0), 0.0]
 		current_position = self.kin_pos
